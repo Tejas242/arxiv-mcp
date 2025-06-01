@@ -280,19 +280,6 @@ This server follows arXiv's API guidelines:
 - **User-Agent**: Descriptive identification for all requests
 - **Terms compliance**: Adheres to arXiv's usage policies
 
-## 📜 License & Attribution
-
-<div align="center">
-
-[![Powered by arXiv](https://img.shields.io/badge/Powered%20by-arXiv-b31b1b?style=for-the-badge&logo=arxiv&logoColor=white)](https://arxiv.org/)
-[![Built with MCP](https://img.shields.io/badge/Built%20with-Model%20Context%20Protocol-00d4aa?style=for-the-badge)](https://modelcontextprotocol.io/)
-
-</div>
-
-This project respects arXiv's Terms of Use. Please include this acknowledgment:
-
-> "Thank you to arXiv for use of its open access interoperability."
-
 ## 🙏 Acknowledgments
 
 - **[arXiv](https://arxiv.org/)**
