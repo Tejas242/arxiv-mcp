@@ -273,13 +273,6 @@ main()
 
 </details>
 
-## 📋 API Compliance
-
-This server follows arXiv's API guidelines:
-- **Rate limiting**: Respects 3-second intervals between requests
-- **User-Agent**: Descriptive identification for all requests
-- **Terms compliance**: Adheres to arXiv's usage policies
-
 ## 🙏 Acknowledgments
 
 - **[arXiv](https://arxiv.org/)**
