@@ -23,6 +23,20 @@ A streamlined [Model Context Protocol](https://modelcontextprotocol.io/) server 
 
 ### Installation
 
+#### Option 1: Docker (Recommended)
+
+```bash
+# Pull and run the Docker image
+docker run --rm -it ghcr.io/tejas242/arxiv-mcp:latest
+
+# Or using docker-compose
+git clone https://github.com/tejas242/arxiv-mcp.git
+cd arxiv-mcp
+docker compose up
+```
+
+#### Option 2: Local Development
+
 ```bash
 # Clone and setup
 git clone https://github.com/tejas242/arxiv-mcp.git
@@ -93,6 +107,8 @@ uv run main.py
 <details>
 <summary><strong>Configuration Instructions</strong></summary>
 
+**For Local Installation:**
+
 Add to your Claude Desktop config file:
 
 **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`  
@@ -108,6 +124,24 @@ Add to your Claude Desktop config file:
         "/absolute/path/to/arxiv-mcp",
         "run",
         "main.py"
+      ]
+    }
+  }
+}
+```
+
+**For Docker Installation:**
+
+```json
+{
+  "mcpServers": {
+    "arxiv-mcp": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "ghcr.io/tejas242/arxiv-mcp:latest"
       ]
     }
   }
