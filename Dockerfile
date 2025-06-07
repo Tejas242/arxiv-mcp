@@ -25,12 +25,14 @@ COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/src /app/src
 COPY --from=builder /app/main.py /app/main.py
 COPY --from=builder /app/pyproject.toml /app/pyproject.toml
+COPY --from=builder /app/uv.lock /app/uv.lock
 
 # Make virtual environment accessible
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Change ownership to non-root user
-RUN chown -R arxiv:arxiv /app
+# Create cache directory and change ownership
+RUN mkdir -p /home/arxiv/.cache/uv && \
+    chown -R arxiv:arxiv /app /home/arxiv
 USER arxiv
 
 # Health check
@@ -41,4 +43,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 EXPOSE 8000
 
 # Set entrypoint
-ENTRYPOINT ["python", "main.py"]
+ENTRYPOINT ["uv", "run", "main.py"]
