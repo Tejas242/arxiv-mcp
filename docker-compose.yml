@@ -5,13 +5,22 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    # For published images, use:
+    # image: ghcr.io/tejas242/arxiv-mcp:latest
+    # For development images, use:
+    # image: ghcr.io/tejas242/arxiv-mcp:dev
     container_name: arxiv-mcp-server
     restart: unless-stopped
     
-    # Environment variables
+    # Environment variables - customize as needed
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONDONTWRITEBYTECODE=1
+      # Optional: Customize server behavior
+      # - ARXIV_MCP_ENVIRONMENT=production
+      # - ARXIV_MCP_LOG_LEVEL=INFO
+      # - ARXIV_MCP_API_TIMEOUT=30
+      # - ARXIV_MCP_API_MAX_RETRIES=3
     
     # Resource limits
     deploy:
