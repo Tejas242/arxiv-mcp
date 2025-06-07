@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  arxiv-mcp-dev:
+    image: ghcr.io/tejas242/arxiv-mcp:dev
+    container_name: arxiv-mcp-dev-server
+    restart: unless-stopped
+    
+    # Development environment variables
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - ARXIV_MCP_ENVIRONMENT=development
+      - ARXIV_MCP_LOG_LEVEL=DEBUG
+      - ARXIV_MCP_SERVER_DEBUG=true
+      - ARXIV_MCP_SERVER_ENABLE_METRICS=true
+    
+    # Resource limits (more generous for development)
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    # Development logging (more verbose)
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+    
+    # Development volumes for debugging
+    volumes:
+      - dev-logs:/app/logs
+      - dev-cache:/home/arxiv/.cache
+
+volumes:
+  dev-logs:
+    driver: local
+  dev-cache:
+    driver: local
+
+networks:
+  default:
+    name: arxiv-mcp-dev-network

@@ -1,6 +1,7 @@
 """arXiv API client for retrieving papers and metadata."""
 
 import logging
+import time
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from urllib.parse import urlencode
@@ -8,43 +9,205 @@ from urllib.parse import urlencode
 import httpx
 import feedparser
 from dateutil.parser import parse as parse_date
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+    before_sleep_log,
+)
 
 from .models import ArxivPaper, ArxivAuthor, ArxivCategory, ArxivLink, SearchResult, SearchParams
 from .utils import format_arxiv_id, build_search_query
+from .config import get_settings
+from .exceptions import (
+    ArxivAPIError,
+    NetworkError,
+    PaperNotFoundError,
+    RateLimitError,
+    SearchError,
+    DownloadError,
+    ValidationError,
+)
+from .logging_config import get_logger, log_api_request, log_api_response, log_error
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ArxivClient:
     """Client for interacting with the arXiv API."""
     
-    BASE_URL = "http://export.arxiv.org/api/query"
-    USER_AGENT = "arxiv-mcp/0.1.0"
-    
-    def __init__(self, timeout: int = 30, max_retries: int = 3):
+    def __init__(self, timeout: Optional[int] = None, max_retries: Optional[int] = None):
         """
         Initialize the arXiv client.
         
         Args:
-            timeout: Request timeout in seconds
-            max_retries: Maximum number of retry attempts
+            timeout: Request timeout in seconds (overrides config)
+            max_retries: Maximum number of retry attempts (overrides config)
         """
-        self.timeout = timeout
-        self.max_retries = max_retries
+        try:
+            settings = get_settings()
+            self.config = settings.arxiv_api
+            self.security_config = settings.security
+        except Exception as e:
+            logger.warning(f"Failed to load config, using defaults: {e}")
+            # Fallback defaults
+            class DefaultConfig:
+                base_url = "http://export.arxiv.org/api/query"
+                user_agent = "arxiv-mcp/0.1.0"
+                timeout = 30
+                max_retries = 3
+                retry_delay = 1.0
+                max_retry_delay = 60.0
+                max_results_limit = 100
+            
+            class DefaultSecurityConfig:
+                max_download_size = 100_000_000
+                allowed_domains = ["arxiv.org", "export.arxiv.org"]
+                sanitize_inputs = True
+                validate_arxiv_ids = True
+            
+            self.config = DefaultConfig()
+            self.security_config = DefaultSecurityConfig()
+        
+        # Override with provided values
+        self.timeout = timeout or self.config.timeout
+        self.max_retries = max_retries or self.config.max_retries
+        
+        # Setup HTTP client with enhanced configuration
         self._client = httpx.AsyncClient(
-            timeout=timeout,
-            headers={"User-Agent": self.USER_AGENT}
+            timeout=httpx.Timeout(self.timeout),
+            headers={"User-Agent": self.config.user_agent},
+            limits=httpx.Limits(
+                max_keepalive_connections=10,
+                max_connections=20,
+                keepalive_expiry=30
+            ),
+            follow_redirects=True,
         )
+        
+        # Rate limiting
+        self._last_request_time = 0.0
+        self._request_count = 0
+        self._rate_limit_window_start = time.time()
     
     async def close(self):
         """Close the HTTP client."""
-        await self._client.aclose()
+        if hasattr(self, '_client'):
+            await self._client.aclose()
     
     async def __aenter__(self):
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.close()
+    
+    def _check_rate_limit(self) -> None:
+        """Check and enforce rate limiting."""
+        current_time = time.time()
+        
+        # Reset window if needed
+        if current_time - self._rate_limit_window_start >= self.config.rate_limit_window:
+            self._rate_limit_window_start = current_time
+            self._request_count = 0
+        
+        # Check limit
+        if self._request_count >= self.config.rate_limit_requests:
+            wait_time = self.config.rate_limit_window - (current_time - self._rate_limit_window_start)
+            if wait_time > 0:
+                raise RateLimitError(retry_after=int(wait_time))
+        
+        self._request_count += 1
+    
+    def _create_retry_decorator(self):
+        """Create a retry decorator with configured settings."""
+        return retry(
+            stop=stop_after_attempt(self.max_retries),
+            wait=wait_exponential(
+                multiplier=self.config.retry_delay,
+                max=self.config.max_retry_delay
+            ),
+            retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError, httpx.ReadError)),
+            before_sleep=before_sleep_log(logger, logging.WARNING),
+            reraise=True
+        )
+    
+    async def _make_request(self, url: str) -> httpx.Response:
+        """
+        Make an HTTP request with retry logic and error handling.
+        
+        Args:
+            url: URL to request
+            
+        Returns:
+            HTTP response
+            
+        Raises:
+            NetworkError: For network-related errors
+            ArxivAPIError: For API-related errors
+            RateLimitError: For rate limit violations
+        """
+        self._check_rate_limit()
+        
+        start_time = time.time()
+        log_api_request(url)
+        
+        @self._create_retry_decorator()
+        async def _request():
+            try:
+                response = await self._client.get(url)
+                response_time = time.time() - start_time
+                log_api_response(url, response.status_code, response_time)
+                
+                if response.status_code == 429:
+                    retry_after = response.headers.get('Retry-After')
+                    raise RateLimitError(retry_after=int(retry_after) if retry_after else None)
+                elif response.status_code >= 500:
+                    raise ArxivAPIError(
+                        f"Server error: {response.status_code}",
+                        status_code=response.status_code,
+                        response_text=response.text
+                    )
+                elif response.status_code >= 400:
+                    raise ArxivAPIError(
+                        f"Client error: {response.status_code}",
+                        status_code=response.status_code,
+                        response_text=response.text
+                    )
+                
+                response.raise_for_status()
+                return response
+                
+            except httpx.HTTPError as e:
+                log_error(e, context={'url': url})
+                raise NetworkError(f"HTTP error: {str(e)}", original_error=e)
+            except Exception as e:
+                log_error(e, context={'url': url})
+                raise ArxivAPIError(f"Unexpected error: {str(e)}")
+        
+        return await _request()
+    
+    def _validate_domain(self, url: str) -> None:
+        """
+        Validate that the URL domain is allowed.
+        
+        Args:
+            url: URL to validate
+            
+        Raises:
+            ValidationError: If domain is not allowed
+        """
+        from urllib.parse import urlparse
+        
+        parsed = urlparse(url)
+        domain = parsed.netloc.lower()
+        
+        # Remove port if present
+        if ':' in domain:
+            domain = domain.split(':')[0]
+        
+        if not any(allowed in domain for allowed in self.security_config.allowed_domains):
+            raise ValidationError(f"Domain not allowed: {domain}")
     
     def _parse_entry(self, entry: Dict[str, Any]) -> ArxivPaper:
         """
@@ -110,8 +273,13 @@ class ArxivClient:
                     pdf_url = link.href
         
         # Parse dates
-        published = parse_date(entry.published)
-        updated = parse_date(entry.updated)
+        try:
+            published = parse_date(entry.published)
+            updated = parse_date(entry.updated)
+        except Exception as e:
+            logger.warning(f"Error parsing dates for {arxiv_id}: {e}")
+            published = datetime.now()
+            updated = datetime.now()
         
         # Extract additional metadata
         comment = getattr(entry, 'arxiv_comment', None)
@@ -144,7 +312,27 @@ class ArxivClient:
             
         Returns:
             SearchResult containing papers and metadata
+            
+        Raises:
+            ValidationError: For invalid search parameters
+            SearchError: For search-related errors
+            NetworkError: For network-related errors
         """
+        # Validate parameters
+        if params.max_results > self.config.max_results_limit:
+            raise ValidationError(
+                f"max_results cannot exceed {self.config.max_results_limit}",
+                field="max_results",
+                value=params.max_results
+            )
+        
+        if self.security_config.sanitize_inputs:
+            # Basic input sanitization
+            sanitized_query = params.query.replace('\n', ' ').replace('\r', ' ')
+            if sanitized_query != params.query:
+                logger.warning("Query was sanitized")
+                params.query = sanitized_query
+        
         query_params = {
             'search_query': params.query,
             'start': params.start,
@@ -153,11 +341,11 @@ class ArxivClient:
             'sortOrder': params.sort_order
         }
         
-        url = f"{self.BASE_URL}?{urlencode(query_params)}"
+        url = f"{self.config.base_url}?{urlencode(query_params)}"
+        self._validate_domain(url)
         
         try:
-            response = await self._client.get(url)
-            response.raise_for_status()
+            response = await self._make_request(url)
             
             # Parse the Atom feed
             feed = feedparser.parse(response.text)
@@ -165,10 +353,14 @@ class ArxivClient:
             if 'bozo_exception' in feed and feed.bozo:
                 logger.warning(f"Feed parsing warning: {feed.bozo_exception}")
             
+            # Check for feed-level errors
+            if hasattr(feed, 'status') and feed.status >= 400:
+                raise SearchError(f"Feed error: {feed.status}")
+            
             # Extract metadata
-            total_results = int(feed.feed.opensearch_totalresults)
-            start_index = int(feed.feed.opensearch_startindex)
-            items_per_page = int(feed.feed.opensearch_itemsperpage)
+            total_results = int(feed.feed.get('opensearch_totalresults', 0))
+            start_index = int(feed.feed.get('opensearch_startindex', 0))
+            items_per_page = int(feed.feed.get('opensearch_itemsperpage', 0))
             
             # Parse papers
             papers = []
@@ -188,12 +380,11 @@ class ArxivClient:
                 query=params.query
             )
             
-        except httpx.HTTPError as e:
-            logger.error(f"HTTP error during search: {e}")
+        except (NetworkError, ValidationError, SearchError):
             raise
         except Exception as e:
-            logger.error(f"Unexpected error during search: {e}")
-            raise
+            log_error(e, context={'query': params.query, 'url': url})
+            raise SearchError(f"Unexpected search error: {str(e)}", query=params.query)
     
     async def get_paper_by_id(self, arxiv_id: str) -> Optional[ArxivPaper]:
         """
@@ -204,33 +395,43 @@ class ArxivClient:
             
         Returns:
             ArxivPaper if found, None otherwise
+            
+        Raises:
+            InvalidArxivIdError: For invalid arXiv ID format
+            PaperNotFoundError: If paper is not found
+            NetworkError: For network-related errors
         """
-        formatted_id = format_arxiv_id(arxiv_id)
+        try:
+            if self.security_config.validate_arxiv_ids:
+                formatted_id = format_arxiv_id(arxiv_id)
+            else:
+                formatted_id = arxiv_id
+        except ValueError as e:
+            raise InvalidArxivIdError(arxiv_id)
         
         query_params = {
             'id_list': formatted_id,
             'max_results': 1
         }
         
-        url = f"{self.BASE_URL}?{urlencode(query_params)}"
+        url = f"{self.config.base_url}?{urlencode(query_params)}"
+        self._validate_domain(url)
         
         try:
-            response = await self._client.get(url)
-            response.raise_for_status()
+            response = await self._make_request(url)
             
             feed = feedparser.parse(response.text)
             
             if not feed.entries:
-                return None
+                raise PaperNotFoundError(arxiv_id)
             
             return self._parse_entry(feed.entries[0])
             
-        except httpx.HTTPError as e:
-            logger.error(f"HTTP error getting paper {arxiv_id}: {e}")
+        except (NetworkError, PaperNotFoundError, InvalidArxivIdError):
             raise
         except Exception as e:
-            logger.error(f"Unexpected error getting paper {arxiv_id}: {e}")
-            raise
+            log_error(e, context={'arxiv_id': arxiv_id, 'url': url})
+            raise ArxivAPIError(f"Unexpected error getting paper {arxiv_id}: {str(e)}")
     
     async def search_by_author(self, author_name: str, max_results: int = 10) -> SearchResult:
         """
@@ -243,10 +444,13 @@ class ArxivClient:
         Returns:
             SearchResult containing papers by the author
         """
+        if self.security_config.sanitize_inputs:
+            author_name = author_name.strip()
+        
         query = build_search_query(author=author_name)
         params = SearchParams(
             query=query,
-            max_results=max_results,
+            max_results=min(max_results, self.config.max_results_limit),
             sort_by="submittedDate",
             sort_order="descending"
         )
@@ -263,10 +467,13 @@ class ArxivClient:
         Returns:
             SearchResult containing papers in the category
         """
+        if self.security_config.sanitize_inputs:
+            category = category.strip()
+        
         query = build_search_query(category=category)
         params = SearchParams(
             query=query,
-            max_results=max_results,
+            max_results=min(max_results, self.config.max_results_limit),
             sort_by="submittedDate",
             sort_order="descending"
         )
@@ -281,18 +488,44 @@ class ArxivClient:
             
         Returns:
             PDF content as bytes
+            
+        Raises:
+            InvalidArxivIdError: For invalid arXiv ID format
+            DownloadError: For download-related errors
+            NetworkError: For network-related errors
         """
-        formatted_id = format_arxiv_id(arxiv_id)
+        try:
+            if self.security_config.validate_arxiv_ids:
+                formatted_id = format_arxiv_id(arxiv_id)
+            else:
+                formatted_id = arxiv_id
+        except ValueError:
+            raise InvalidArxivIdError(arxiv_id)
+        
         pdf_url = f"https://arxiv.org/pdf/{formatted_id}.pdf"
+        self._validate_domain(pdf_url)
         
         try:
-            response = await self._client.get(pdf_url)
-            response.raise_for_status()
+            response = await self._make_request(pdf_url)
+            
+            # Check content length
+            content_length = response.headers.get('content-length')
+            if content_length and int(content_length) > self.security_config.max_download_size:
+                raise DownloadError(
+                    f"PDF too large: {content_length} bytes",
+                    arxiv_id=arxiv_id,
+                    url=pdf_url
+                )
+            
+            # Check content type
+            content_type = response.headers.get('content-type', '').lower()
+            if 'application/pdf' not in content_type:
+                logger.warning(f"Unexpected content type for PDF: {content_type}")
+            
             return response.content
             
-        except httpx.HTTPError as e:
-            logger.error(f"HTTP error downloading PDF {arxiv_id}: {e}")
+        except (NetworkError, DownloadError, InvalidArxivIdError):
             raise
         except Exception as e:
-            logger.error(f"Unexpected error downloading PDF {arxiv_id}: {e}")
-            raise
+            log_error(e, context={'arxiv_id': arxiv_id, 'url': pdf_url})
+            raise DownloadError(f"Unexpected error downloading PDF {arxiv_id}: {str(e)}", arxiv_id=arxiv_id, url=pdf_url)

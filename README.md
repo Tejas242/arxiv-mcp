@@ -102,6 +102,59 @@ uv run main.py
 
 ## ⚙️ Configuration
 
+### Environment Variables
+
+<details>
+<summary><strong>Environment Configuration</strong></summary>
+
+You can customize the server behavior using environment variables:
+
+#### Logging Configuration
+- `ARXIV_MCP_LOG_LEVEL`: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL) - default: INFO
+- `ARXIV_MCP_LOG_FORMAT`: Log format (json, text, colored) - default: colored
+- `ARXIV_MCP_LOG_FILE_PATH`: Optional log file path
+- `ARXIV_MCP_LOG_MAX_FILE_SIZE`: Max log file size in bytes - default: 10MB
+- `ARXIV_MCP_LOG_BACKUP_COUNT`: Number of backup log files - default: 5
+
+#### API Configuration
+- `ARXIV_MCP_API_BASE_URL`: arXiv API base URL - default: http://export.arxiv.org/api/query
+- `ARXIV_MCP_API_USER_AGENT`: User agent string - default: arxiv-mcp/0.1.0
+- `ARXIV_MCP_API_TIMEOUT`: Request timeout in seconds - default: 30
+- `ARXIV_MCP_API_MAX_RETRIES`: Maximum retry attempts - default: 3
+- `ARXIV_MCP_API_RETRY_DELAY`: Base delay between retries - default: 1.0
+- `ARXIV_MCP_API_MAX_RETRY_DELAY`: Maximum retry delay - default: 60.0
+- `ARXIV_MCP_API_MAX_RESULTS_LIMIT`: Max results per search - default: 100
+- `ARXIV_MCP_API_RATE_LIMIT_REQUESTS`: Requests per rate limit window - default: 100
+- `ARXIV_MCP_API_RATE_LIMIT_WINDOW`: Rate limit window in seconds - default: 60
+
+#### Server Configuration
+- `ARXIV_MCP_SERVER_NAME`: Server name - default: arxiv-mcp
+- `ARXIV_MCP_SERVER_VERSION`: Server version - default: 0.1.0
+- `ARXIV_MCP_SERVER_DEBUG`: Enable debug mode - default: false
+- `ARXIV_MCP_SERVER_ENABLE_METRICS`: Enable metrics collection - default: false
+- `ARXIV_MCP_SERVER_TEMP_DIR`: Temporary directory for downloads
+
+#### Security Configuration
+- `ARXIV_MCP_SECURITY_MAX_DOWNLOAD_SIZE`: Max PDF download size in bytes - default: 100MB
+- `ARXIV_MCP_SECURITY_ALLOWED_DOMAINS`: Comma-separated allowed domains - default: arxiv.org,export.arxiv.org
+- `ARXIV_MCP_SECURITY_SANITIZE_INPUTS`: Enable input sanitization - default: true
+- `ARXIV_MCP_SECURITY_VALIDATE_ARXIV_IDS`: Enable strict arXiv ID validation - default: true
+
+#### Global Configuration
+- `ARXIV_MCP_ENVIRONMENT`: Application environment (development, production, testing) - default: development
+- `ARXIV_MCP_CONFIG_FILE`: Path to configuration file (JSON/YAML)
+
+#### Example Usage
+```bash
+# Run with custom configuration
+ARXIV_MCP_LOG_LEVEL=DEBUG \
+ARXIV_MCP_API_TIMEOUT=45 \
+ARXIV_MCP_API_MAX_RETRIES=5 \
+uv run main.py
+```
+
+</details>
+
 ### Claude Desktop Setup
 
 <details>
@@ -142,6 +195,24 @@ Add to your Claude Desktop config file:
         "--rm",
         "-i",
         "ghcr.io/tejas242/arxiv-mcp:latest"
+      ]
+    }
+  }
+}
+```
+
+**For Development/Latest Features:**
+
+```json
+{
+  "mcpServers": {
+    "arxiv-mcp": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "ghcr.io/tejas242/arxiv-mcp:dev"
       ]
     }
   }
@@ -254,6 +325,50 @@ Based on comprehensive testing of all functions:
 - **PDF downloads**: Redirect handling needs improvement (PDFs accessible via direct links)
 
 ## 🔧 Development
+
+### Development Workflow
+
+**Branch Strategy:**
+- `main`: Stable releases, tagged versions
+- `dev`: Development branch, latest features and fixes
+
+**Docker Images:**
+- `ghcr.io/tejas242/arxiv-mcp:latest`: Production-ready from main branch
+- `ghcr.io/tejas242/arxiv-mcp:dev`: Development builds from dev branch
+
+**Development Setup:**
+```bash
+# Clone and setup
+git clone https://github.com/tejas242/arxiv-mcp.git
+cd arxiv-mcp
+
+# Switch to dev branch for latest features
+git checkout dev
+
+# Install dependencies
+uv sync --dev
+
+# Run tests
+uv run pytest tests/ -v
+
+# Run development server with debug logging
+ARXIV_MCP_LOG_LEVEL=DEBUG uv run main.py
+```
+
+**Docker Development:**
+```bash
+# Use development image
+docker pull ghcr.io/tejas242/arxiv-mcp:dev
+
+# Run with development configuration
+docker-compose -f docker-compose.dev.yml up
+
+# Or run directly with debug settings
+docker run --rm -i \
+  -e ARXIV_MCP_LOG_LEVEL=DEBUG \
+  -e ARXIV_MCP_ENVIRONMENT=development \
+  ghcr.io/tejas242/arxiv-mcp:dev
+```
 
 ### Project Structure
 ```
