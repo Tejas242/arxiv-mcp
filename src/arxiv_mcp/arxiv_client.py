@@ -22,6 +22,7 @@ from .utils import format_arxiv_id, build_search_query
 from .config import get_settings
 from .exceptions import (
     ArxivAPIError,
+    InvalidArxivIdError,
     NetworkError,
     PaperNotFoundError,
     RateLimitError,
