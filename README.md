@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge&logo=opensourceinitiative&logoColor=white)](LICENSE)
 [![Code Quality](https://img.shields.io/badge/Code%20Quality-Black-000000?style=for-the-badge&logo=python&logoColor=white)](https://github.com/psf/black)
 [![CI/CD](https://img.shields.io/github/actions/workflow/status/tejas242/arxiv-mcp/ci.yml?branch=main&style=for-the-badge&logo=github&label=CI%2FCD)](https://github.com/tejas242/arxiv-mcp/actions)
-[![Docker](https://img.shields.io/badge/Docker-Available-2496ed?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/tejas242/arxiv-mcp/pkgs/container/arxiv-mcp)
+[![Docker](https://img.shields.io/badge/Docker-Available-2496ed?style=for-the-badge&logo=docker&logoColor=white)](https://hub.docker.com/r/screenager/arxiv-mcp)
 
 </div>
 
