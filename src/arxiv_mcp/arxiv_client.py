@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class ArxivClient:
     """Client for interacting with the arXiv API."""
     
-    BASE_URL = "http://export.arxiv.org/api/query"
+    BASE_URL = "https://export.arxiv.org/api/query"
     USER_AGENT = "arxiv-mcp/0.1.0"
     
     def __init__(self, timeout: int = 30, max_retries: int = 3):
